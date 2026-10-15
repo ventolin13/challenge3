@@ -1,1 +1,13 @@
+# build binary
 /challenge3
+*.exe
+*.test
+*.out
+
+# local agent files
+.cursor/
+
+# editor and OS
+.DS_Store
+.idea/
+.vscode/

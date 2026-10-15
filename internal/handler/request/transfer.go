@@ -13,11 +13,16 @@ const maxFractionDigits = 2
 const maxAmountParts = 2
 
 // TransferRequest is the POST body. Pointers keep a missing field apart from an empty string.
+// All four fields are required.
 type TransferRequest struct {
-	TransferID    *string  `json:"idempotency_key" example:"550e8400-e29b-41d4-a716-446655440000"`
-	FromAccountID *string  `json:"from_account_id" example:"acc_1"`
-	ToAccountID   *string  `json:"to_account_id" example:"acc_2"`
-	Amount        *float64 `json:"amount" example:"100"`
+	// UUID клиента. Обязательное поле.
+	TransferID *string `json:"idempotency_key" binding:"required" example:"550e8400-e29b-41d4-a716-446655440000"`
+	// Счёт списания. Обязательное поле, пустая строка не принимается.
+	FromAccountID *string `json:"from_account_id" binding:"required" example:"acc_1"`
+	// Счёт зачисления. Обязательное поле, пустая строка не принимается.
+	ToAccountID *string `json:"to_account_id" binding:"required" example:"acc_2"`
+	// Сумма числом. Обязательное поле, больше нуля, не больше двух знаков после запятой.
+	Amount *float64 `json:"amount" binding:"required" example:"100"`
 }
 
 // ParseAmount checks the JSON number text and returns a positive decimal with at most 2 fraction digits.

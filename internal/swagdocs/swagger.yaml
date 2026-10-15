@@ -11,21 +11,35 @@ definitions:
       status_code:
         example: 422
         type: integer
+    required:
+    - reason
+    - status
+    - status_code
     type: object
   github_com_ventolin13_challenge3_internal_handler_request.TransferRequest:
     properties:
       amount:
+        description: Сумма числом. Обязательное поле, больше нуля, не больше двух
+          знаков после запятой.
         example: 100
         type: number
       from_account_id:
+        description: Счёт списания. Обязательное поле, пустая строка не принимается.
         example: acc_1
         type: string
       idempotency_key:
+        description: UUID клиента. Обязательное поле.
         example: 550e8400-e29b-41d4-a716-446655440000
         type: string
       to_account_id:
+        description: Счёт зачисления. Обязательное поле, пустая строка не принимается.
         example: acc_2
         type: string
+    required:
+    - amount
+    - from_account_id
+    - idempotency_key
+    - to_account_id
     type: object
   github_com_ventolin13_challenge3_internal_handler_response.AccountResponse:
     properties:
@@ -35,6 +49,9 @@ definitions:
       balance:
         example: 900
         type: number
+    required:
+    - account_id
+    - balance
     type: object
   github_com_ventolin13_challenge3_internal_handler_response.TransferResponse:
     properties:
@@ -54,6 +71,9 @@ definitions:
         example: insufficient funds
         type: string
       status:
+        enum:
+        - completed
+        - rejected
         example: completed
         type: string
       status_code:
@@ -65,6 +85,15 @@ definitions:
       transfer_id:
         example: 550e8400-e29b-41d4-a716-446655440000
         type: string
+    required:
+    - amount
+    - created_at
+    - from_account_id
+    - idempotency_key
+    - status
+    - status_code
+    - to_account_id
+    - transfer_id
     type: object
 host: localhost:3000
 info:
@@ -106,6 +135,7 @@ paths:
       consumes:
       - application/json
       description: |-
+        Обязательные поля тела: idempotency_key, from_account_id, to_account_id, amount.
         Списывает amount с from_account_id и зачисляет ту же сумму на to_account_id.
         idempotency_key — UUID клиента, он же transfer_id.
         Повтор того же ключа и тела возвращает записанный исход.

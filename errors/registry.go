@@ -3,11 +3,11 @@ package errors
 
 import "net/http"
 
-// Response is the only error body.
+// Response is the only error body. All three fields are always set.
 type Response struct {
-	StatusCode int    `json:"status_code" example:"422"`
-	Status     string `json:"status" example:"rejected"`
-	Reason     string `json:"reason" example:"insufficient funds"`
+	StatusCode int    `json:"status_code" binding:"required" example:"422"`
+	Status     string `json:"status" binding:"required" example:"rejected"`
+	Reason     string `json:"reason" binding:"required" example:"insufficient funds"`
 }
 
 // Entry is one row of the registry.

@@ -8,22 +8,23 @@ import (
 )
 
 // TransferResponse is the body of a completed post and of a transfer read.
+// reason is present only for a stored rejection. The other fields are always set.
 type TransferResponse struct {
-	TransferID     string  `json:"transfer_id" example:"550e8400-e29b-41d4-a716-446655440000"`
-	IdempotencyKey string  `json:"idempotency_key" example:"550e8400-e29b-41d4-a716-446655440000"`
-	Status         string  `json:"status" example:"completed"`
-	StatusCode     int     `json:"status_code" example:"200"`
-	FromAccountID  string  `json:"from_account_id" example:"acc_1"`
-	ToAccountID    string  `json:"to_account_id" example:"acc_2"`
-	Amount         float64 `json:"amount" example:"100"`
+	TransferID     string  `json:"transfer_id" binding:"required" example:"550e8400-e29b-41d4-a716-446655440000"`
+	IdempotencyKey string  `json:"idempotency_key" binding:"required" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Status         string  `json:"status" binding:"required" enums:"completed,rejected" example:"completed"`
+	StatusCode     int     `json:"status_code" binding:"required" example:"200"`
+	FromAccountID  string  `json:"from_account_id" binding:"required" example:"acc_1"`
+	ToAccountID    string  `json:"to_account_id" binding:"required" example:"acc_2"`
+	Amount         float64 `json:"amount" binding:"required" example:"100"`
 	Reason         *string `json:"reason,omitempty" example:"insufficient funds"`
-	CreatedAt      *string `json:"created_at" example:"2025-01-01T00:00:00Z"`
+	CreatedAt      *string `json:"created_at" binding:"required" example:"2025-01-01T00:00:00Z"`
 }
 
-// AccountResponse is the balance body.
+// AccountResponse is the balance body. Both fields are always set.
 type AccountResponse struct {
-	AccountID string  `json:"account_id" example:"acc_1"`
-	Balance   float64 `json:"balance" example:"900"`
+	AccountID string  `json:"account_id" binding:"required" example:"acc_1"`
+	Balance   float64 `json:"balance" binding:"required" example:"900"`
 }
 
 // NewTransfer builds the JSON view. created_at is set from the stored row.

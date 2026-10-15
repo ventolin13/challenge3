@@ -51,6 +51,7 @@ type wireTransfer struct {
 // A failed Postgres connection answers 500 postgres connection failed.
 //
 // @Summary     Перевести монеты
+// @Description Обязательные поля тела: idempotency_key, from_account_id, to_account_id, amount.
 // @Description Списывает amount с from_account_id и зачисляет ту же сумму на to_account_id.
 // @Description idempotency_key — UUID клиента, он же transfer_id.
 // @Description Повтор того же ключа и тела возвращает записанный исход.

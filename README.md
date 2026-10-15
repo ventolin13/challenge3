@@ -14,25 +14,15 @@
 
 Начальные `acc_1` … `acc_10` с `balance = 1000.00` создаёт миграция `V1_003__seed_accounts.sql`. Повторный старт уже существующие `balance` не перезаписывает.
 
-## Локальный процесс
+## Запуск
 
-`make migrate-up` поднимает Postgres в фоне и один раз прогоняет Flyway в базу `challenge` на порту `5432`. `make run` читает `deployments/local.env` и запускает `go run ./cmd/challenge3` на хосте. В файле `DATABASE_URL` указывает на `127.0.0.1:5432`, `HTTP_ADDR=:3000`, `SEED_ACCOUNTS=true`. Флаг вставляет отсутствующие `acc_1` … `acc_10` и не меняет уже записанный `balance`. Те же счета создаёт миграция `V1_003__seed_accounts.sql`, поэтому повторный старт их не затирает.
+`docker-compose.yml` поднимает Postgres и Flyway. Сеть `challenge3`, база `challenge` на порту `5432`. Образ сервиса собирает `Dockerfile`, контейнер называется `challenge3-app` и слушает порт `3000`.
 
-`make migrate-down` удаляет `transfers`, `accounts` и `flyway_schema_history` в этой базе. Postgres при этом должен быть запущен.
+На хосте: `make migrate-up`, затем `make run`. Окружение `deployments/local.env`, база `127.0.0.1:5432`.
 
-## Контейнеры
+В контейнере: `make compose-up`, затем `make start-app`. Окружение `deployments/app.env`, база `postgres:5432`. Продовый контейнер: `make start-prod`, окружение `deployments/prod.env`, `SEED_ACCOUNTS=false`.
 
-`docker-compose.yml` поднимает Postgres и Flyway. Сервиса в нём нет. Образ собирается отдельным `Dockerfile`.
-
-`make compose-up` выполняет `docker compose up` и держит Postgres и Flyway на переднем плане. Порт `3000` не занимается. Flyway накатывает `migrations/V*.sql`, включая начальные балансы. `make compose-down` выполняет `docker compose down` и удаляет эти контейнеры.
-
-`make start-app` выполняет `docker build -t challenge3 .` и `docker run` контейнера `challenge3-app`. Окружение — `deployments/app.env`: сеть compose `challenge3`, база `postgres:5432`, порт `3000`, `SEED_ACCOUNTS=true`. Перед этим Postgres уже должен быть в сети `challenge3`: его поднимает `make migrate-up` или `make compose-up`.
-
-`make start-prod` собирает тот же образ и запускает тот же контейнер `challenge3-app` с `deployments/prod.env`: `SEED_ACCOUNTS=false`. Начальные строки остаются делом миграции, процесс при старте `accounts` не дописывает.
-
-`make app-down` выполняет `docker rm -f challenge3-app` и удаляет контейнер, запущенный `start-app` или `start-prod`. Postgres и Flyway остаются.
-
-У Postgres в compose нет тома. `compose-down` удаляет контейнер базы вместе с данными. `app-down` базу не трогает. Следующий `compose-up` или `migrate-up` создаёт базу заново и снова накатывает миграции.
+`make app-down` удаляет контейнер сервиса. `make compose-down` удаляет Postgres и Flyway. Тома у базы нет, данные уходят вместе с контейнером.
 
 ## Команды
 

@@ -350,6 +350,7 @@ components:
         - from_account_id
         - to_account_id
         - amount
+        - created_at
       properties:
         transfer_id:
           type: string
@@ -386,8 +387,7 @@ components:
         created_at:
           type: string
           format: date-time
-          nullable: true
-          description: Время строки перевода, UTC. Поле необязательное и может быть `null`, чтобы ответ был совместим с примером POST в PDF, где даты нет.
+          description: Время строки перевода, UTC, RFC3339. Поле есть в каждом ответе 200.
           example: "2025-01-01T00:00:00Z"
     AccountResponse:
       type: object

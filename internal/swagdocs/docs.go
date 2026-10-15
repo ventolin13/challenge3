@@ -58,7 +58,7 @@ const docTemplate = `{
         },
         "/api/v1/transfers": {
             "post": {
-                "description": "Списывает amount с from_account_id и зачисляет ту же сумму на to_account_id.\nidempotency_key — UUID клиента, он же transfer_id.\nПовтор того же ключа и тела возвращает записанный исход.\nДругое тело — 409 idempotency key reused with different payload.\nОткат транзакции — 409 transfer transaction rolled back, retry the request.\nЗанятый transfer_id — 409 transfer_id already exists.\nНет соединения с Postgres — 500 postgres connection failed.",
+                "description": "Обязательные поля тела: idempotency_key, from_account_id, to_account_id, amount.\nСписывает amount с from_account_id и зачисляет ту же сумму на to_account_id.\nidempotency_key — UUID клиента, он же transfer_id.\nПовтор того же ключа и тела возвращает записанный исход.\nДругое тело — 409 idempotency key reused with different payload.\nОткат транзакции — 409 transfer transaction rolled back, retry the request.\nЗанятый transfer_id — 409 transfer_id already exists.\nНет соединения с Postgres — 500 postgres connection failed.",
                 "consumes": [
                     "application/json"
                 ],
@@ -165,6 +165,11 @@ const docTemplate = `{
     "definitions": {
         "github_com_ventolin13_challenge3_errors.Response": {
             "type": "object",
+            "required": [
+                "reason",
+                "status",
+                "status_code"
+            ],
             "properties": {
                 "reason": {
                     "type": "string",
@@ -182,20 +187,30 @@ const docTemplate = `{
         },
         "github_com_ventolin13_challenge3_internal_handler_request.TransferRequest": {
             "type": "object",
+            "required": [
+                "amount",
+                "from_account_id",
+                "idempotency_key",
+                "to_account_id"
+            ],
             "properties": {
                 "amount": {
+                    "description": "Сумма числом. Обязательное поле, больше нуля, не больше двух знаков после запятой.",
                     "type": "number",
                     "example": 100
                 },
                 "from_account_id": {
+                    "description": "Счёт списания. Обязательное поле, пустая строка не принимается.",
                     "type": "string",
                     "example": "acc_1"
                 },
                 "idempotency_key": {
+                    "description": "UUID клиента. Обязательное поле.",
                     "type": "string",
                     "example": "550e8400-e29b-41d4-a716-446655440000"
                 },
                 "to_account_id": {
+                    "description": "Счёт зачисления. Обязательное поле, пустая строка не принимается.",
                     "type": "string",
                     "example": "acc_2"
                 }
@@ -203,6 +218,10 @@ const docTemplate = `{
         },
         "github_com_ventolin13_challenge3_internal_handler_response.AccountResponse": {
             "type": "object",
+            "required": [
+                "account_id",
+                "balance"
+            ],
             "properties": {
                 "account_id": {
                     "type": "string",
@@ -216,6 +235,16 @@ const docTemplate = `{
         },
         "github_com_ventolin13_challenge3_internal_handler_response.TransferResponse": {
             "type": "object",
+            "required": [
+                "amount",
+                "created_at",
+                "from_account_id",
+                "idempotency_key",
+                "status",
+                "status_code",
+                "to_account_id",
+                "transfer_id"
+            ],
             "properties": {
                 "amount": {
                     "type": "number",
@@ -239,6 +268,10 @@ const docTemplate = `{
                 },
                 "status": {
                     "type": "string",
+                    "enum": [
+                        "completed",
+                        "rejected"
+                    ],
                     "example": "completed"
                 },
                 "status_code": {

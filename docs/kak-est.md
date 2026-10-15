@@ -39,21 +39,21 @@
 - Старт: `acc_1` … `acc_10`, у каждого баланс 1000. Сумма системы 10000.
 - `docker-compose.yml`, сервис на `http://localhost:3000/`.
 - Тесты на значимых случаях, не на полном покрытии.
-- Краткое описание: что менять для продакшена, почему база и библиотеки, инфраструктура и масштаб, компромиссы. Черновик письма — `docs/kak-nado.md`.
+- Краткое описание: что менять для продакшена, почему база и библиотеки, инфраструктура и масштаб, компромиссы. Письмо — [docs/soprovoditelnoe-pismo.md](soprovoditelnoe-pismo.md).
 - Базу PDF оставляет на выбор. Нагрузку, реплики, очередь, уведомления и вебсокеты PDF не задаёт.
 
 ## Принятые отличия
 
-У аккаунта в этом сервисе один счётчик — баланс монет. Количество предметов на продажу описано в `docs/kak-nado.md`.
+У аккаунта в этом сервисе один счётчик — баланс монет. Зачем в игре понадобится количество предметов, написано в [docs/soprovoditelnoe-pismo.md](soprovoditelnoe-pismo.md).
 
-- `created_at` в `TransferResponse` — nullable. Заполненное значение — время строки `TransferModel`, RFC3339, UTC. Рядом в ответе `idempotency_key`, `status_code` и `reason`, когда `GetTransfer` читает записанный отказ.
+- В примерах PDF у ответа 200 нет `idempotency_key`, `status_code` и `created_at`, у ответа 422 нет `status_code`. Эти поля оставлены. Обязательные поля примеров на месте, строки `reason` те же. `created_at` — время строки `TransferModel`, RFC3339, UTC. `reason` есть у записанного отказа.
 - `amount` и `balance` — JSON-числа. Ноль, отрицательное число и больше двух знаков после запятой — 400. `1` и `1.2` принимаются и хранятся как `1.00` и `1.20`.
 - Оригинальный запрос — строка `TransferModel`. В ней либо исполненный перевод, либо нехватка средств. Отдельной модели идемпотентности нет. Повтор того же `idempotency_key` и того же тела возвращает эту строку и перевод второй раз не проводит.
 - Сериализация и взаимная блокировка откатывают транзакцию перевода. Строка не пишется. Сервис транзакцию заново не открывает. Ответ один: 409 `transfer transaction rolled back, retry the request`. Повтор решает клиент. Уже занятый `transfer_id` — 409 `transfer_id already exists`. Нет соединения с Postgres — 500 `postgres connection failed`.
-- `self-transfer not allowed` и `account not found` в `TransferModel` нет. Повтор того же ключа после них — новый запрос. `reason` один — `account not found`: `PostTransfer` отвечает 422 `rejected`, `GetAccount` отвечает 404 `not found`.
+- `self-transfer not allowed` и `account not found` в `transfers` не пишутся: задание не требует хранить эти ошибки. Это отказ запроса до движения `balance`. Повтор того же ключа после них — новый запрос. `reason` один — `account not found`: `PostTransfer` отвечает 422 `rejected`, `GetAccount` отвечает 404 `not found`.
 - Тела 400 и 409 задаёт реестр ошибок. Другое тело уже записанного ключа — 409 `idempotency key reused with different payload`.
-- `idempotency_key` — UUID. Он же `transfer_id`. Сервис UUID не генерирует.
-- Начальные `acc_1` … `acc_10` создаёт флаг конфигурации: локально включён, в продовом запуске выключен. Повторный старт балансы не меняет.
+- В задании `idempotency_key` — непустая строка, в примере это UUID. Сервис проверяет, что ключ является UUID: иначе 400 `idempotency_key must be a uuid`. Он же `transfer_id`. Сервис UUID не генерирует.
+- Начальные `acc_1` … `acc_10` с `balance = 1000.00` вставляет миграция `V1_003__seed_accounts.sql`. Её накатывают `make migrate-up` и `make compose-up`. `SEED_ACCOUNTS=true` у `make run` и `make start-app` дописывает отсутствующие строки и не перезаписывает `balance`. У `make start-prod` флаг выключен.
 
 ## Структура проекта
 
@@ -73,9 +73,9 @@
 | `internal/config` | флаг начальных аккаунтов |
 | `deployments` | локальный запуск и продовый |
 | `migrations` | Flyway, один файл на одну задачу, имена вида `V1_001__init.sql` |
-| `docs` | этот конспект, `docs/kak-nado.md`, `docs/swagger.yaml` |
+| `docs` | этот конспект, `docs/soprovoditelnoe-pismo.md`, `docs/Go_Code_Challenge_3.pdf`, `docs/swagger.yaml` |
 
-Обычный `Find` не открывает транзакцию и не берёт `FOR UPDATE`. Списание идёт своей транзакцией `REPEATABLE READ` с `SELECT … FOR UPDATE` исходящего аккаунта. Тесты репозитория: Postgres из compose, миграция, свои данные, затем Flyway clean. Clean разрешён только в тестовом прогоне. Утверждения — testify.
+Обычный `Find` не открывает транзакцию и не берёт `FOR UPDATE`. Списание идёт своей транзакцией `REPEATABLE READ` с `SELECT … FOR UPDATE` исходящего аккаунта. Утверждения в тестах — testify.
 
 ## Бизнес-логика
 
@@ -97,7 +97,7 @@
 
 Входящий `balance` не записывают абсолютным числом из чтения без его блокировки. Пустой `Reason` значит, что отказа нет. `GetTransfer` читает ту же строку `TransferModel`. Пока её нет, ответ 404.
 
-Начальные `acc_1` … `acc_10` с балансом 1000 создаются, только если флаг конфигурации включён. Уже существующие балансы при старте не перезаписываются.
+Начальные `acc_1` … `acc_10` с `balance = 1000.00` вставляет миграция. `SEED_ACCOUNTS=true` дописывает только отсутствующие строки и уже записанный `balance` не меняет. Команды запуска — в [README](../README.md).
 
 ## Ручки
 
@@ -117,7 +117,7 @@
 
 `TransferRequest`: `TransferID` с именем в JSON `idempotency_key`, `FromAccountID`, `ToAccountID`, `Amount`.
 
-`TransferResponse` отдаёт и `PostTransfer` при 200, и `GetTransfer` при 200: `transfer_id`, `idempotency_key`, `status`, `status_code`, `from_account_id`, `to_account_id`, `amount`. `amount` — число. `created_at` — указатель, в JSON поле можно не присылать и можно прислать `null`. `reason` есть только у сохранённого отказа.
+`TransferResponse` отдаёт и `PostTransfer` при 200, и `GetTransfer` при 200: `transfer_id`, `idempotency_key`, `status`, `status_code`, `from_account_id`, `to_account_id`, `amount`, `created_at`. `amount` — число. `created_at` — время строки, RFC3339, UTC. `reason` есть только у сохранённого отказа. В примерах PDF части этих полей нет, в ответе они остаются.
 
 `AccountResponse`: `account_id`, `balance` числом.
 
@@ -159,3 +159,29 @@
 | `account_missing` | 404 | `not found` | `account not found` |
 | `transfer_missing` | 404 | `not found` | `transfer not found` |
 | `database_unavailable` | 500 | `unavailable` | `postgres connection failed` |
+
+Запуск, миграции и команды Makefile — в [README](../README.md).
+
+## Тесты
+
+На каждом уровне приложения один пример.
+
+Транспорт, `TestPostTransferWritesServiceError` в `internal/handler/transfer_test.go`. Мок `TransferService` возвращает одну из ошибок сервиса. Хендлер пишет ту `errors.Response`, которая этой ошибке соответствует: код HTTP, `status` и `reason`.
+
+Сервис, `TestPostTransferStoresInsufficientFunds` в `internal/services/transfer_test.go`. Моки `Transactor`, `AccountRepository` и `TransferRepository`. У исходящего аккаунта `balance = 5`, `amount = 10`. Сервис открывает транзакцию, блокирует исходящий счёт и пишет в `transfers` строку со `status=rejected` и `reason=insufficient funds`. `AddAmount` не вызывается. Наружу уходит `ErrInsufficientFunds`.
+
+Репозиторий, `TestTransfersConcurrent` в `internal/repositories/transfer_test.go`. Это тест базы.
+
+Рядом, не как уровень приложения, остаётся разбор `amount` в `internal/handler/request`.
+
+Postgres — отдельный контейнер `challenge3-pg-test`, база `challenge_test`, порт `55432`. На него накатываются те же `V*.sql`, включая начальные `acc_1` … `acc_10` с `balance = 1000.00`. После прогона удаляется контейнер целиком. Таблицы по одной тест не чистит.
+
+Восемь своих аккаунтов, у каждого `balance = 1000`. С каждого `from_account_id` уходит три перевода, всего 24. Горутина одна на `from_account_id`, внутри пачки до 20 переводов. Откат `transfer transaction rolled back` повторяется, до 20 попыток на один `transfer_id`.
+
+`amount` случайный, два знака после запятой, от `0.01` до `1000.00`. Один перевод каждого `from_account_id` больше суммы стартовых балансов этих восьми аккаунтов, то есть больше `8000`. Его нельзя провести. Строка пишется со `status=rejected` и `reason=insufficient funds`. Из-за этой нехватки тест не падает. Таких отказов не меньше, чем аккаунтов в горутинах.
+
+В конце читаются все `accounts` и все `transfers`:
+
+- у каждого аккаунта `balance >= 0`;
+- `balance` равен `1000` минус сумма `amount` исполненных переводов с этим `from_account_id` плюс сумма `amount` исполненных переводов с этим `to_account_id`. Строки со `status=rejected` баланс не двигают;
+- сумма всех `balance` равна `1000`, умноженному на число аккаунтов. В эту сумму входят и `acc_1` … `acc_10`, и восемь аккаунтов теста.

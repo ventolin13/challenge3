@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,10 +41,11 @@ const (
 	nextAccountOffset   = 1
 	oneGoroutine        = 1
 	oneAttempt          = 1
-	oneRow              = 1
 	retryLimit          = 20
 	balanceScale        = 2
-	chunkedAmount       = "400"
+	centsPerUnit        = 100
+	minAmountCents      = 1
+	maxAmountCents      = startBalance * centsPerUnit
 )
 
 type database struct {
@@ -87,28 +89,96 @@ func TestTransfersConcurrent(t *testing.T) {
 		ids = append(ids, addAccount(t, store, startBalance))
 	}
 
+	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), uint64(oneAttempt)))
 	commands := make([]transferCommand, 0, concurrencyAccounts*transfersPerAccount)
 	for i, from := range ids {
+		amounts := randomAmounts(rng)
 		for n := range transfersPerAccount {
 			to := ids[(i+n+nextAccountOffset)%len(ids)]
 			commands = append(commands, transferCommand{
 				key:    uuid.NewString(),
 				from:   from,
 				to:     to,
-				amount: chunkedAmount,
+				amount: amounts[n].StringFixed(balanceScale),
 			})
 		}
 	}
 
 	runTransfersChunked(t, store, transferChunkCap, commands)
+	requireBalancesMatchTransfers(t, store)
+	requireInsufficientFunds(t, store, commands)
+}
+
+func randomAmounts(rng *rand.Rand) []decimal.Decimal {
+	amounts := make([]decimal.Decimal, 0, transfersPerAccount)
+	for range transfersPerAccount {
+		amounts = append(amounts, randomAmount(rng, minAmountCents, maxAmountCents))
+	}
+	aboveAll := decimal.NewFromInt(int64(concurrencyAccounts) * startBalance).Add(randomAmount(rng, minAmountCents, centsPerUnit))
+	amounts[rng.IntN(len(amounts))] = aboveAll
+	return amounts
+}
+
+func randomAmount(rng *rand.Rand, minCents, maxCents int) decimal.Decimal {
+	cents := minCents + rng.IntN(maxCents-minCents+oneAttempt)
+	return decimal.NewFromInt(int64(cents)).Shift(-balanceScale)
+}
+
+func requireInsufficientFunds(t *testing.T, store *database, commands []transferCommand) {
+	t.Helper()
+	want := make(map[string]struct{}, len(commands))
+	for _, cmd := range commands {
+		want[cmd.key] = struct{}{}
+	}
+	rows, err := store.rows.FindModel(context.Background(), &models.TransferFilter{TransferID: nil})
+	require.NoError(t, err)
+	rejected := 0
+	for _, row := range rows {
+		if _, ok := want[row.TransferID.String()]; !ok {
+			continue
+		}
+		if row.Status == models.StatusRejected && row.Reason.String == apperrors.ErrInsufficientFunds.Reason {
+			rejected++
+		}
+	}
+	require.GreaterOrEqual(t, rejected, concurrencyAccounts)
+	t.Logf("rejected insufficient funds=%d", rejected)
+}
+
+func requireBalancesMatchTransfers(t *testing.T, store *database) {
+	t.Helper()
+	ctx := context.Background()
+	accounts, err := store.accounts.FindModel(ctx, &models.AccountFilter{AccountID: nil, AccountIDs: nil})
+	require.NoError(t, err)
+	rows, err := store.rows.FindModel(ctx, &models.TransferFilter{TransferID: nil})
+	require.NoError(t, err)
 
 	total := decimal.Zero
-	for _, id := range ids {
-		balance := balanceOf(t, store, id)
-		require.True(t, balance.GreaterThanOrEqual(decimal.Zero))
-		total = total.Add(balance)
+	for _, account := range accounts {
+		require.Truef(t, account.Balance.GreaterThanOrEqual(decimal.Zero), "account_id=%s balance=%s", account.AccountID, account.Balance.StringFixed(balanceScale))
+		fromTransfers := decimal.NewFromInt(startBalance)
+		for _, row := range rows {
+			if row.Status == models.StatusRejected {
+				continue
+			}
+			if row.Status != models.StatusCompleted {
+				t.Errorf("transfer_id=%s status=%s", row.TransferID, row.Status)
+				continue
+			}
+			if row.FromAccountID == account.AccountID {
+				fromTransfers = fromTransfers.Sub(row.Amount)
+			}
+			if row.ToAccountID == account.AccountID {
+				fromTransfers = fromTransfers.Add(row.Amount)
+			}
+		}
+		require.Truef(t, account.Balance.Equal(fromTransfers), "account_id=%s balance=%s from transfers=%s", account.AccountID, account.Balance.StringFixed(balanceScale), fromTransfers.StringFixed(balanceScale))
+		t.Logf("account_id=%s balance=%s from transfers=%s", account.AccountID, account.Balance.StringFixed(balanceScale), fromTransfers.StringFixed(balanceScale))
+		total = total.Add(account.Balance)
 	}
-	require.Equal(t, decimal.NewFromInt(int64(concurrencyAccounts)*startBalance).StringFixed(balanceScale), total.StringFixed(balanceScale))
+	expectedTotal := decimal.NewFromInt(int64(len(accounts)) * startBalance)
+	require.Truef(t, total.Equal(expectedTotal), "balance total=%s accounts=%d expected=%s", total.StringFixed(balanceScale), len(accounts), expectedTotal.StringFixed(balanceScale))
+	t.Logf("balance total=%s accounts=%d", total.StringFixed(balanceScale), len(accounts))
 }
 
 func runTransfersChunked(t *testing.T, store *database, chunkCap int, commands []transferCommand) {
@@ -355,15 +425,4 @@ func addAccount(t *testing.T, store *database, balance int64) string {
 	})
 	require.NoError(t, err)
 	return id
-}
-
-func balanceOf(t *testing.T, store *database, accountID string) decimal.Decimal {
-	t.Helper()
-	found, err := store.accounts.FindModel(context.Background(), &models.AccountFilter{
-		AccountID:  &accountID,
-		AccountIDs: nil,
-	})
-	require.NoError(t, err)
-	require.Len(t, found, oneRow)
-	return found[0].Balance
 }

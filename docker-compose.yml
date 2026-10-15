@@ -27,15 +27,6 @@ services:
       postgres:
         condition: service_healthy
 
-  app:
-    profiles: ["app"]
-    build: .
-    ports:
-      - "3000:3000"
-    environment:
-      DATABASE_URL: postgres://challenge:challenge@postgres:5432/challenge?sslmode=disable
-      HTTP_ADDR: ":3000"
-      SEED_ACCOUNTS: "true"
-    depends_on:
-      flyway:
-        condition: service_completed_successfully
+networks:
+  default:
+    name: challenge3

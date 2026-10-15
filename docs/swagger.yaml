@@ -1,0 +1,419 @@
+openapi: 3.0.3
+info:
+  title: challenge3
+  version: "1.0"
+  description: |
+    Сервис переводов монет между аккаунтами игроков.
+    Один процесс, REST, одна база Postgres.
+    Интерфейс: http://localhost:3000/swagger/index.html
+servers:
+  - url: http://localhost:3000
+tags:
+  - name: transfers
+    description: Переводы монет
+  - name: accounts
+    description: Балансы аккаунтов
+paths:
+  /api/v1/transfers:
+    post:
+      tags: [transfers]
+      operationId: PostTransfer
+      summary: Перевести монеты
+      description: |
+        Списывает `amount` с `from_account_id` и зачисляет ту же сумму на `to_account_id`.
+
+        `idempotency_key` присылает клиент. Это UUID, он же `transfer_id` в ответе.
+        Свой идентификатор сервис не генерирует.
+
+        Оригинальный запрос — тот, который уже записан в `transfers`:
+        исполненный перевод или нехватка средств. Отдельной записи идемпотентности нет.
+        Повтор с тем же `idempotency_key` и теми же `from_account_id`, `to_account_id`, `amount`
+        возвращает этот записанный ответ и не проводит перевод второй раз.
+        Записанная нехватка средств снова отвечает 422, даже когда деньги уже появились.
+        Повтор с тем же ключом и другим телом возвращает 409
+        `idempotency key reused with different payload`.
+
+        `self-transfer not allowed` и `account not found` в базу не пишутся.
+
+        `amount` — JSON-число. Строго больше нуля, не больше двух знаков после запятой.
+        `1` и `1.2` принимаются и хранятся как `1.00` и `1.20`.
+        Число знаков проверяется по тексту числа в JSON, до перевода во `float64`.
+
+        Если строки ещё нет: оба аккаунта существуют, иначе 422 `account not found`
+        (даже если счета совпали); перевод самому себе — 422 `self-transfer not allowed`.
+        Дальше одна транзакция `REPEATABLE READ` без повтора внутри сервиса:
+        блокировка исходящего аккаунта, проверка баланса, запись перевода.
+        Нехватка средств пишется в ту же таблицу без движения баланса.
+        Успех в той же транзакции списывает исходящий `balance` и увеличивает входящий
+        как `balance = balance + amount`.
+
+        Откат транзакции из-за другой транзакции строку не оставляет.
+        Сервис её заново не открывает. Ответ 409 `transfer transaction rolled back, retry the request`.
+        Повтор решает клиент. Уже занятый `transfer_id` — 409 `transfer_id already exists`.
+        Нет соединения с Postgres — 500 `postgres connection failed`. 400 не сохраняется.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransferRequest"
+            example:
+              idempotency_key: 550e8400-e29b-41d4-a716-446655440000
+              from_account_id: acc_1
+              to_account_id: acc_2
+              amount: 100
+      responses:
+        "200":
+          description: Перевод исполнен. `status` равен `completed`, поля `reason` нет.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransferResponse"
+              example:
+                transfer_id: 550e8400-e29b-41d4-a716-446655440000
+                idempotency_key: 550e8400-e29b-41d4-a716-446655440000
+                status: completed
+                status_code: 200
+                from_account_id: acc_1
+                to_account_id: acc_2
+                amount: 100
+                created_at: "2025-01-01T00:00:00Z"
+        "400":
+          description: Тело не прошло проверку. Строка перевода не пишется.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalid_json:
+                  summary: invalid_json
+                  value:
+                    status_code: 400
+                    status: invalid
+                    reason: request body is not valid json
+                invalid_transfer_id:
+                  summary: invalid_transfer_id
+                  value:
+                    status_code: 400
+                    status: invalid
+                    reason: idempotency_key must be a uuid
+                invalid_from_account_id:
+                  summary: invalid_from_account_id
+                  value:
+                    status_code: 400
+                    status: invalid
+                    reason: from_account_id must be non-empty
+                invalid_to_account_id:
+                  summary: invalid_to_account_id
+                  value:
+                    status_code: 400
+                    status: invalid
+                    reason: to_account_id must be non-empty
+                invalid_amount:
+                  summary: invalid_amount
+                  value:
+                    status_code: 400
+                    status: invalid
+                    reason: amount must be positive with at most 2 fraction digits
+        "409":
+          description: |
+            Чужая строка `TransferModel` с тем же ключом и другим телом.
+            Либо транзакция перевода откатилась из-за другой транзакции и строку не записала: клиент сам решает, повторять ли запрос.
+            Либо `transfer_id` уже есть.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                idempotency_conflict:
+                  summary: idempotency_conflict
+                  value:
+                    status_code: 409
+                    status: conflict
+                    reason: idempotency key reused with different payload
+                transfer_transaction_conflict:
+                  summary: transfer_transaction_conflict
+                  value:
+                    status_code: 409
+                    status: conflict
+                    reason: transfer transaction rolled back, retry the request
+                transfer_id_conflict:
+                  summary: transfer_id_conflict
+                  value:
+                    status_code: 409
+                    status: conflict
+                    reason: transfer_id already exists
+        "422":
+          description: |
+            `insufficient funds` записывается в `transfers`. Повтор с тем же ключом и тем же телом вернёт тот же 422.
+            `self-transfer not allowed` и `account not found` не записываются.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                insufficient_funds:
+                  summary: insufficient_funds
+                  value:
+                    status_code: 422
+                    status: rejected
+                    reason: insufficient funds
+                self_transfer:
+                  summary: self_transfer
+                  value:
+                    status_code: 422
+                    status: rejected
+                    reason: self-transfer not allowed
+                account_not_found:
+                  summary: account_not_found
+                  value:
+                    status_code: 422
+                    status: rejected
+                    reason: account not found
+        "500":
+          description: Нет соединения с Postgres.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status_code: 500
+                status: unavailable
+                reason: postgres connection failed
+  /api/v1/accounts/{id}:
+    get:
+      tags: [accounts]
+      operationId: GetAccount
+      summary: Баланс аккаунта
+      description: |
+        Возвращает `account_id` и текущий `balance`.
+        Баланс — JSON-число, например `900`. В базе он хранится как `numeric(20,2)`.
+        Неизвестный `id` — 404 `account not found`.
+        Тот же `reason`, что 422 у `POST /api/v1/transfers`, когда в переводе нет такого счёта.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Идентификатор аккаунта, например `acc_1`.
+          schema:
+            type: string
+            example: acc_1
+      responses:
+        "200":
+          description: Аккаунт найден.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountResponse"
+              example:
+                account_id: acc_1
+                balance: 900
+        "404":
+          description: Аккаунта с таким `id` нет.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status_code: 404
+                status: not found
+                reason: account not found
+        "500":
+          description: Нет соединения с Postgres.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status_code: 500
+                status: unavailable
+                reason: postgres connection failed
+  /api/v1/transfers/{idempotency_key}:
+    get:
+      tags: [transfers]
+      operationId: GetTransfer
+      summary: Перевод по ключу идемпотентности
+      description: |
+        Читает `transfers` по `idempotency_key`.
+        Ключ в пути — тот же UUID, что клиент передал в `POST /api/v1/transfers`.
+
+        Ответ 200 `TransferResponse`, если строка есть.
+        У исполненного перевода `status` равен `completed`, поля `reason` нет.
+        У записанной нехватки средств `status` равен `rejected`, `reason` равен `insufficient funds`.
+        `status_code` в этом ответе равен 200.
+        Сам отказ при создании был 422 на `PostTransfer`.
+        Отказы без записи (`self-transfer not allowed`, `account not found`) здесь не появляются.
+
+        Путь не UUID — 400. Строки нет — 404.
+        400, 409 `transfer transaction rolled back, retry the request` и 409 `transfer_id already exists` сюда не попадают: такая попытка не сохраняется.
+      parameters:
+        - name: idempotency_key
+          in: path
+          required: true
+          description: UUID ключа идемпотентности.
+          schema:
+            type: string
+            format: uuid
+            example: 550e8400-e29b-41d4-a716-446655440000
+      responses:
+        "200":
+          description: Строка перевода найдена. Исполненный перевод или записанная нехватка средств.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransferResponse"
+              examples:
+                completed:
+                  summary: исполненный перевод
+                  value:
+                    transfer_id: 550e8400-e29b-41d4-a716-446655440000
+                    idempotency_key: 550e8400-e29b-41d4-a716-446655440000
+                    status: completed
+                    status_code: 200
+                    from_account_id: acc_1
+                    to_account_id: acc_2
+                    amount: 100
+                    created_at: "2025-01-01T00:00:00Z"
+                rejected:
+                  summary: сохранённый отказ
+                  value:
+                    transfer_id: 550e8400-e29b-41d4-a716-446655440001
+                    idempotency_key: 550e8400-e29b-41d4-a716-446655440001
+                    status: rejected
+                    status_code: 200
+                    from_account_id: acc_1
+                    to_account_id: acc_2
+                    amount: 10000
+                    reason: insufficient funds
+                    created_at: "2025-01-01T00:00:00Z"
+        "400":
+          description: Ключ в пути не UUID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status_code: 400
+                status: invalid
+                reason: idempotency_key must be a uuid
+        "404":
+          description: Сохранённого перевода с таким ключом нет.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status_code: 404
+                status: not found
+                reason: transfer not found
+        "500":
+          description: Нет соединения с Postgres.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status_code: 500
+                status: unavailable
+                reason: postgres connection failed
+components:
+  schemas:
+    TransferRequest:
+      type: object
+      required: [idempotency_key, from_account_id, to_account_id, amount]
+      properties:
+        idempotency_key:
+          type: string
+          format: uuid
+          description: UUID от клиента. Он же `transfer_id`.
+          example: 550e8400-e29b-41d4-a716-446655440000
+        from_account_id:
+          type: string
+          description: Аккаунт, с которого списывают монеты. Пустая строка не принимается.
+          example: acc_1
+        to_account_id:
+          type: string
+          description: Аккаунт, на который зачисляют монеты. Пустая строка не принимается.
+          example: acc_2
+        amount:
+          type: number
+          format: float
+          description: Сумма числом. Больше нуля, не больше двух знаков после запятой.
+          example: 100
+    TransferResponse:
+      type: object
+      required:
+        - transfer_id
+        - idempotency_key
+        - status
+        - status_code
+        - from_account_id
+        - to_account_id
+        - amount
+      properties:
+        transfer_id:
+          type: string
+          format: uuid
+          description: Совпадает с `idempotency_key`.
+          example: 550e8400-e29b-41d4-a716-446655440000
+        idempotency_key:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        status:
+          type: string
+          enum: [completed, rejected]
+          example: completed
+        status_code:
+          type: integer
+          description: HTTP-код этого ответа.
+          example: 200
+        from_account_id:
+          type: string
+          example: acc_1
+        to_account_id:
+          type: string
+          example: acc_2
+        amount:
+          type: number
+          format: float
+          description: Сумма числом. В базе хранится как `numeric(20,2)`.
+          example: 100
+        reason:
+          type: string
+          description: Есть у сохранённого отказа. У `completed` поле не отдаётся.
+          example: insufficient funds
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Время строки перевода, UTC. Поле необязательное и может быть `null`, чтобы ответ был совместим с примером POST в PDF, где даты нет.
+          example: "2025-01-01T00:00:00Z"
+    AccountResponse:
+      type: object
+      required: [account_id, balance]
+      properties:
+        account_id:
+          type: string
+          example: acc_1
+        balance:
+          type: number
+          format: float
+          description: Баланс числом. В базе хранится как `numeric(20,2)`.
+          example: 900
+    ErrorResponse:
+      type: object
+      required: [status_code, status, reason]
+      properties:
+        status_code:
+          type: integer
+          description: HTTP-код этого ответа.
+          example: 422
+        status:
+          type: string
+          description: "`invalid`, `conflict`, `rejected`, `not found` или `unavailable`."
+          example: rejected
+        reason:
+          type: string
+          description: Текст из реестра ошибок.
+          example: insufficient funds

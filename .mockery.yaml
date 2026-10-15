@@ -1,0 +1,10 @@
+with-expecter: True
+dir: mocks/{{ replaceAll .InterfaceDirRelative "internal" "internal_"}}
+mockname: "Mock{{.InterfaceName}}"
+outpkg: "{{.PackageName}}"
+filename: "{{.InterfaceName|snakecase}}.go"
+packages:
+  github.com/ventolin13/challenge3:
+    config:
+      recursive: True
+      include-regex: "^(AccountRepository|TransferRepository|Transactor|TransferService)$"

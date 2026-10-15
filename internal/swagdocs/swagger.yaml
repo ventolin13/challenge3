@@ -1,0 +1,181 @@
+basePath: /
+definitions:
+  github_com_ventolin13_challenge3_errors.Response:
+    properties:
+      reason:
+        example: insufficient funds
+        type: string
+      status:
+        example: rejected
+        type: string
+      status_code:
+        example: 422
+        type: integer
+    type: object
+  github_com_ventolin13_challenge3_internal_handler_request.TransferRequest:
+    properties:
+      amount:
+        example: 100
+        type: number
+      from_account_id:
+        example: acc_1
+        type: string
+      idempotency_key:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      to_account_id:
+        example: acc_2
+        type: string
+    type: object
+  github_com_ventolin13_challenge3_internal_handler_response.AccountResponse:
+    properties:
+      account_id:
+        example: acc_1
+        type: string
+      balance:
+        example: 900
+        type: number
+    type: object
+  github_com_ventolin13_challenge3_internal_handler_response.TransferResponse:
+    properties:
+      amount:
+        example: 100
+        type: number
+      created_at:
+        example: "2025-01-01T00:00:00Z"
+        type: string
+      from_account_id:
+        example: acc_1
+        type: string
+      idempotency_key:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      reason:
+        example: insufficient funds
+        type: string
+      status:
+        example: completed
+        type: string
+      status_code:
+        example: 200
+        type: integer
+      to_account_id:
+        example: acc_2
+        type: string
+      transfer_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+host: localhost:3000
+info:
+  contact: {}
+  description: Переводы монет между игровыми аккаунтами.
+  title: Coin transfers
+  version: "1.0"
+paths:
+  /api/v1/accounts/{id}:
+    get:
+      description: Возвращает account_id и balance числом. Неизвестный id — 404 account
+        not found.
+      parameters:
+      - description: идентификатор аккаунта
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: аккаунт найден
+          schema:
+            $ref: '#/definitions/github_com_ventolin13_challenge3_internal_handler_response.AccountResponse'
+        "404":
+          description: аккаунта нет
+          schema:
+            $ref: '#/definitions/github_com_ventolin13_challenge3_errors.Response'
+        "500":
+          description: нет соединения с Postgres
+          schema:
+            $ref: '#/definitions/github_com_ventolin13_challenge3_errors.Response'
+      summary: Баланс аккаунта
+      tags:
+      - accounts
+  /api/v1/transfers:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Списывает amount с from_account_id и зачисляет ту же сумму на to_account_id.
+        idempotency_key — UUID клиента, он же transfer_id.
+        Повтор того же ключа и тела возвращает записанный исход.
+        Другое тело — 409 idempotency key reused with different payload.
+        Откат транзакции — 409 transfer transaction rolled back, retry the request.
+        Занятый transfer_id — 409 transfer_id already exists.
+        Нет соединения с Postgres — 500 postgres connection failed.
+      parameters:
+      - description: idempotency_key, from_account_id, to_account_id, amount
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_ventolin13_challenge3_internal_handler_request.TransferRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: перевод исполнен
+          schema:
+            $ref: '#/definitions/github_com_ventolin13_challenge3_internal_handler_response.TransferResponse'
+        "400":
+          description: тело не прошло проверку
+          schema:
+            $ref: '#/definitions/github_com_ventolin13_challenge3_errors.Response'
+        "409":
+          description: конфликт ключа или откат транзакции
+          schema:
+            $ref: '#/definitions/github_com_ventolin13_challenge3_errors.Response'
+        "422":
+          description: перевод отклонён
+          schema:
+            $ref: '#/definitions/github_com_ventolin13_challenge3_errors.Response'
+        "500":
+          description: нет соединения с Postgres
+          schema:
+            $ref: '#/definitions/github_com_ventolin13_challenge3_errors.Response'
+      summary: Перевести монеты
+      tags:
+      - transfers
+  /api/v1/transfers/{idempotency_key}:
+    get:
+      description: Читает transfers по idempotency_key. 200 для исполненного перевода
+        и для записанной нехватки средств. Путь не UUID — 400. Строки нет — 404.
+      parameters:
+      - description: UUID ключа идемпотентности
+        in: path
+        name: idempotency_key
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: строка перевода найдена
+          schema:
+            $ref: '#/definitions/github_com_ventolin13_challenge3_internal_handler_response.TransferResponse'
+        "400":
+          description: ключ не UUID
+          schema:
+            $ref: '#/definitions/github_com_ventolin13_challenge3_errors.Response'
+        "404":
+          description: строки нет
+          schema:
+            $ref: '#/definitions/github_com_ventolin13_challenge3_errors.Response'
+        "500":
+          description: нет соединения с Postgres
+          schema:
+            $ref: '#/definitions/github_com_ventolin13_challenge3_errors.Response'
+      summary: Перевод по ключу идемпотентности
+      tags:
+      - transfers
+swagger: "2.0"

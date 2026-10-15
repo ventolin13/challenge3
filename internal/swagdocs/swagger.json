@@ -1,0 +1,253 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Переводы монет между игровыми аккаунтами.",
+        "title": "Coin transfers",
+        "contact": {},
+        "version": "1.0"
+    },
+    "host": "localhost:3000",
+    "basePath": "/",
+    "paths": {
+        "/api/v1/accounts/{id}": {
+            "get": {
+                "description": "Возвращает account_id и balance числом. Неизвестный id — 404 account not found.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "accounts"
+                ],
+                "summary": "Баланс аккаунта",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "идентификатор аккаунта",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "аккаунт найден",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ventolin13_challenge3_internal_handler_response.AccountResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "аккаунта нет",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ventolin13_challenge3_errors.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "нет соединения с Postgres",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ventolin13_challenge3_errors.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/transfers": {
+            "post": {
+                "description": "Списывает amount с from_account_id и зачисляет ту же сумму на to_account_id.\nidempotency_key — UUID клиента, он же transfer_id.\nПовтор того же ключа и тела возвращает записанный исход.\nДругое тело — 409 idempotency key reused with different payload.\nОткат транзакции — 409 transfer transaction rolled back, retry the request.\nЗанятый transfer_id — 409 transfer_id already exists.\nНет соединения с Postgres — 500 postgres connection failed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "transfers"
+                ],
+                "summary": "Перевести монеты",
+                "parameters": [
+                    {
+                        "description": "idempotency_key, from_account_id, to_account_id, amount",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ventolin13_challenge3_internal_handler_request.TransferRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "перевод исполнен",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ventolin13_challenge3_internal_handler_response.TransferResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "тело не прошло проверку",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ventolin13_challenge3_errors.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "конфликт ключа или откат транзакции",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ventolin13_challenge3_errors.Response"
+                        }
+                    },
+                    "422": {
+                        "description": "перевод отклонён",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ventolin13_challenge3_errors.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "нет соединения с Postgres",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ventolin13_challenge3_errors.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/transfers/{idempotency_key}": {
+            "get": {
+                "description": "Читает transfers по idempotency_key. 200 для исполненного перевода и для записанной нехватки средств. Путь не UUID — 400. Строки нет — 404.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "transfers"
+                ],
+                "summary": "Перевод по ключу идемпотентности",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "UUID ключа идемпотентности",
+                        "name": "idempotency_key",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "строка перевода найдена",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ventolin13_challenge3_internal_handler_response.TransferResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "ключ не UUID",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ventolin13_challenge3_errors.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "строки нет",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ventolin13_challenge3_errors.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "нет соединения с Postgres",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ventolin13_challenge3_errors.Response"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "github_com_ventolin13_challenge3_errors.Response": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "example": "insufficient funds"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "rejected"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 422
+                }
+            }
+        },
+        "github_com_ventolin13_challenge3_internal_handler_request.TransferRequest": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number",
+                    "example": 100
+                },
+                "from_account_id": {
+                    "type": "string",
+                    "example": "acc_1"
+                },
+                "idempotency_key": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "to_account_id": {
+                    "type": "string",
+                    "example": "acc_2"
+                }
+            }
+        },
+        "github_com_ventolin13_challenge3_internal_handler_response.AccountResponse": {
+            "type": "object",
+            "properties": {
+                "account_id": {
+                    "type": "string",
+                    "example": "acc_1"
+                },
+                "balance": {
+                    "type": "number",
+                    "example": 900
+                }
+            }
+        },
+        "github_com_ventolin13_challenge3_internal_handler_response.TransferResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number",
+                    "example": 100
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2025-01-01T00:00:00Z"
+                },
+                "from_account_id": {
+                    "type": "string",
+                    "example": "acc_1"
+                },
+                "idempotency_key": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "reason": {
+                    "type": "string",
+                    "example": "insufficient funds"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "completed"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 200
+                },
+                "to_account_id": {
+                    "type": "string",
+                    "example": "acc_2"
+                },
+                "transfer_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        }
+    }
+}
